@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Edit code - Admin</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: #0b1220; color: #e6edf7; display: flex; flex-direction: column; }
+  [hidden] { display: none !important; }
+  button, select, input { font: inherit; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 12px; background: #111b30; border-bottom: 1px solid #22304d; }
+  .bar b { margin-right: 6px; }
+  .btn { padding: 8px 14px; border-radius: 10px; border: 1px solid #2b3d62; background: #18274a; color: #e6edf7; cursor: pointer; font-weight: 600; font-size: 14px; }
+  .btn:hover { background: #203360; border-color: #4c6fb8; }
+  .btn.primary { background: linear-gradient(135deg, #005bea, #00a6e8); border-color: transparent; }
+  .btn.danger { background: #3a1820; border-color: #6b2a36; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  select { padding: 8px 10px; border-radius: 10px; border: 1px solid #2b3d62; background: #0f1a33; color: #e6edf7; max-width: 260px; }
+  #status { margin-left: auto; font-size: 13px; color: #8fa3c7; }
+  #status.err { color: #ff8a8a; } #status.ok { color: #6ee7a0; }
+  textarea { flex: 1; width: 100%; resize: none; border: 0; outline: 0; padding: 14px; background: #0b1220; color: #d7e3f8; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; white-space: pre; overflow: auto; }
+  .login { margin: auto; width: min(380px, 92vw); background: #111b30; border: 1px solid #22304d; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
+  .login input { padding: 11px 12px; border-radius: 10px; border: 1px solid #2b3d62; background: #0b1220; color: #fff; }
+  .login p { color: #ff8a8a; font-size: 13px; min-height: 18px; }
+</style>
+</head>
+<body>
+<form class="login" id="login" hidden>
+  <h2>🔐 Đăng nhập Admin</h2>
+  <input id="u" placeholder="Tên tài khoản admin" autocomplete="username" required />
+  <input id="p" type="password" placeholder="Mật khẩu" autocomplete="current-password" required />
+  <p id="lerr" role="alert"></p>
+  <button class="btn primary">Đăng nhập</button>
+</form>
+
+<div class="bar" id="bar" hidden>
+  <b>&lt;/&gt; Edit code</b>
+  <button class="btn primary" id="save" title="Ctrl+S">💾 Lưu &amp; cập nhật cho mọi người</button>
+  <button class="btn" id="revert">↩ Hoàn tác thay đổi</button>
+  <select id="bk" aria-label="Bản sao lưu"></select>
+  <button class="btn danger" id="restore">Khôi phục bản này</button>
+  <button class="btn" id="close">✕ Đóng</button>
+  <span id="status"></span>
+</div>
+<textarea id="ta" spellcheck="false" autocapitalize="off" autocomplete="off" hidden></textarea>
+
+<script>
+(() => {
+  'use strict';
+  const TKEY = 'bekyredez_token_v2';
+  const $ = (s) => document.querySelector(s);
+  let token = localStorage.getItem(TKEY) || '', orig = '';
+  const status = (m, k = '') => { const s = $('#status'); s.textContent = m; s.className = k; };
+
+  async function api(path, body) {
+    const opt = { method: body === undefined ? 'GET' : 'POST', headers: {}, cache: 'no-store' };
+    if (body !== undefined) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+    if (token) opt.headers.Authorization = 'Bearer ' + token;
+    let r; try { r = await fetch(path, opt); } catch { throw Object.assign(new Error('Mất kết nối tới máy chủ.'), { code: 0 }); }
+    let j = {}; try { j = await r.json(); } catch {}
+    if (!r.ok) throw Object.assign(new Error(j.error || 'Lỗi ' + r.status), { code: r.status });
+    return j;
+  }
+  function showLogin(msg) { $('#login').hidden = false; $('#bar').hidden = true; $('#ta').hidden = true; $('#lerr').textContent = msg || ''; }
+  function fillBackups(list) {
+    $('#bk').innerHTML = list.length ? list.map((b) => `<option value="${b.name}">${new Date(b.time).toLocaleString('vi-VN')} · ${(b.size / 1024).toFixed(0)}KB · ${b.name.startsWith('before') ? 'trước khôi phục' : 'bản cũ'}</option>`).join('') : '<option value="">(chưa có bản sao lưu)</option>';
+    $('#restore').disabled = !list.length;
+  }
+  async function load() {
+    try {
+      const j = await api('/api/admin/code');
+      $('#login').hidden = true; $('#bar').hidden = false; $('#ta').hidden = false;
+      $('#ta').value = orig = j.html; fillBackups(j.backups);
+      status('Đã tải ' + (j.html.length / 1024).toFixed(1) + ' KB code', 'ok');
+    } catch (e) {
+      if (e.code === 401) showLogin(); else if (e.code === 403) showLogin('Tài khoản này không phải admin.'); else showLogin(e.message);
+    }
+  }
+  $('#login').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { const r = await api('/api/login', { username: $('#u').value, password: $('#p').value }); token = r.token; localStorage.setItem(TKEY, token); await load(); }
+    catch (er) { $('#lerr').textContent = er.message; }
+  });
+
+  /* Kiểm tra lỗi cú pháp trước khi lưu để không làm hỏng web của mọi người */
+  function check(html) {
+    const errs = [];
+    if (!/<html[\s>]/i.test(html)) errs.push('Thiếu thẻ <html>');
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script:not([src])').forEach((s, i) => {
+      const t = (s.type || '').toLowerCase(); if (t && !/javascript/.test(t)) return;
+      try { new Function(s.textContent); } catch (e) { errs.push(`Script #${i + 1}: ${e.message}`); }
+    });
+    return errs;
+  }
+  async function save() {
+    const html = $('#ta').value;
+    const errs = check(html);
+    const msg = errs.length ? '⚠️ Phát hiện lỗi trong code:\n\n' + errs.join('\n') + '\n\nNếu lưu, web của mọi người có thể bị hỏng. Vẫn lưu?' : 'Lưu code và cập nhật ngay cho tất cả máy đang mở web?\n(Bản cũ được tự động sao lưu)';
+    if (!confirm(msg)) return;
+    $('#save').disabled = true; status('Đang lưu...');
+    try { const j = await api('/api/admin/code', { html }); orig = html; fillBackups(j.backups); status('✔ Đã lưu lúc ' + new Date().toLocaleTimeString('vi-VN') + ' - mọi máy đang mở web sẽ tự tải bản mới', 'ok'); }
+    catch (e) { status('✘ ' + e.message, 'err'); }
+    finally { $('#save').disabled = false; }
+  }
+  $('#save').addEventListener('click', save);
+  $('#revert').addEventListener('click', () => { if ($('#ta').value === orig || confirm('Bỏ mọi thay đổi chưa lưu?')) { $('#ta').value = orig; status('Đã hoàn tác'); } });
+  $('#restore').addEventListener('click', async () => {
+    const name = $('#bk').value; if (!name || !confirm('Khôi phục bản sao lưu này? Bản hiện tại sẽ được sao lưu lại trước.')) return;
+    try { const j = await api('/api/admin/restore', { name }); $('#ta').value = orig = j.html; fillBackups(j.backups); status('✔ Đã khôi phục', 'ok'); }
+    catch (e) { status('✘ ' + e.message, 'err'); }
+  });
+  $('#close').addEventListener('click', () => {
+    if ($('#ta').value !== orig && !confirm('Có thay đổi chưa lưu. Vẫn đóng?')) return;
+    window.onbeforeunload = null;
+    if (window.parent !== window) window.parent.postMessage('close-editor', location.origin); else location.href = '/';
+  });
+  $('#ta').addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') { e.preventDefault(); const t = e.target, s = t.selectionStart; t.setRangeText('  ', s, t.selectionEnd, 'end'); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
+  });
+  document.addEventListener('keydown', (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (!$('#bar').hidden) save(); } });
+  window.onbeforeunload = () => ($('#ta').hidden || $('#ta').value === orig ? undefined : 'Có thay đổi chưa lưu');
+  load();
+})();
+</script>
+</body>
+</html>
